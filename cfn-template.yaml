@@ -147,7 +147,7 @@ Resources:
       VpcId: !Ref VPC1
       Tags:
         - Key: Name
-          Value: minecraft-srv-sg
+          Value: prismacloud-srv-sg
       SecurityGroupIngress:
       - IpProtocol: TCP
         FromPort: 8083
