@@ -11,21 +11,10 @@ Parameters:
     Type: String
     Default: 10.0.1.0/24
     Description: Enter a CIDR range for the VPC.
-
-  SN2CidrBlock:
-    Type: String
-    Default: 10.0.2.0/24
-    Description: Enter a CIDR range for the VPC.
   
   LinuxImageId:
-    Type: String
-    Default: ami-07ebfd5b3428b6f4d
-    Description: Ubuntuu Linux 18.0.
-
-  MountPoint:
-    Type: String
-    Default: "/opt/bedrock-server"
-    Description: Ubuntuu Linux 18.0.
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
   
 Mappings: {}
 
@@ -43,33 +32,24 @@ Resources:
       EnableDnsHostnames: 'true'
       Tags:
         - Key: Name
-          Value: minecraft-vpc
+          Value: prismacloud-vpc
   
   SN1:
     Type: 'AWS::EC2::Subnet'
     Properties:
       VpcId: !Ref VPC1
       CidrBlock: !Ref SN1CidrBlock
-      Tags:
-        - Key: Name
-          Value: minecraft-prv-sn
-
-  SN2:
-    Type: 'AWS::EC2::Subnet'
-    Properties:
-      VpcId: !Ref VPC1
-      CidrBlock: !Ref SN2CidrBlock
       MapPublicIpOnLaunch: True
       Tags:
         - Key: Name
-          Value: minecraft-pub-sn
+          Value: prismacloud-pub-sn
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties: 
       Tags:
         - Key: Name
-          Value: minecraft-igw
+          Value: prismacloud-igw
 
   InternetGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -83,22 +63,13 @@ Resources:
    Properties:
       Domain: vpc
   
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt EIP.AllocationId
-      SubnetId: !Ref SN2
-      Tags:
-        - Key: Name
-          Value: minecraft-ngw
-  
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC1
       Tags: 
         - Key: Name
-          Value: minecraft-pub-rt
+          Value: prismacloud-pub-rt
   
   DefaultPublicRoute:
     Type: AWS::EC2::Route
@@ -112,70 +83,47 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref PublicRouteTable
-      SubnetId: !Ref SN2
-  
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC1
-      Tags: 
-        - Key: Name
-          Value: minecraft-prv-rt
-  
-  DefaultPrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
-  
-  PrivateSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
       SubnetId: !Ref SN1
 
-  MineCraftServer:
+  PrismaCloudInstance:
     Type: 'AWS::EC2::Instance'
     Properties:
       NetworkInterfaces:
-        - SubnetId: !Ref SN2
+        - SubnetId: !Ref SN1
           DeviceIndex: 0
           GroupSet: 
             - !Ref SG1
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            VolumeSize: 24
       InstanceType: t2.medium
       ImageId: !Ref LinuxImageId
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
           yum update -y
-          mkdir ${MountPoint}
-          mount -t nfs4 -o nfsvers=4.1 ${FileSystem}.efs.${AWS::Region}.amazonaws.com:/ /${MountPoint}
+          yum install docker -y
       Tags: 
         - 
           Key: "Name"
-          Value: "MineCraftServer"
+          Value: "PrismaCloudInstance"
         - 
           Key: "SSMType"
-          Value: "MineCraftServer"
+          Value: "PrismaCloudInstance"
         - 
           Key: "SSMManaged"
           Value: "True"
-      IamInstanceProfile: !Ref SSMInstanceProfile
-    DependsOn: MountTarget
-
-  MineCraftServerData:
-    Type: 'AWS::S3::Bucket'
-    Properties: {}
+      IamInstanceProfile: !Ref PrismaInstanceProfile
   
-  SSMInstanceProfile:
+  PrismaInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties: 
-      InstanceProfileName: SSMInstanceProfile
+      InstanceProfileName: PrismaInstanceProfile
       Roles: 
-        - !Ref SSMInstanceRole
+        - !Ref PrismaInstanceRole
   
-  SSMInstanceRole:
+  PrismaInstanceRole:
     Type: AWS::IAM::Role
     Properties: 
       AssumeRolePolicyDocument:
@@ -187,247 +135,25 @@ Resources:
               Service: ec2.amazonaws.com
             Action: 'sts:AssumeRole'
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-
-  SSMEndPoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties: 
-      PrivateDnsEnabled: 'true'
-      SecurityGroupIds: 
-        - !Ref SG1
-      ServiceName: 
-        !Join
-        - ''
-        - - 'com.amazonaws.'
-          - !Ref 'AWS::Region'
-          - '.ssm'
-      SubnetIds: 
-        - !Ref SN1
-      VpcId: !Ref VPC1
-      VpcEndpointType: Interface
-  
-  SSMMessagesEndPoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties: 
-      PrivateDnsEnabled: 'true'
-      SecurityGroupIds: 
-        - !Ref SG1
-      ServiceName: 
-        !Join
-          - ''
-          - - 'com.amazonaws.'
-            - !Ref 'AWS::Region'
-            - '.ssmmessages'
-      SubnetIds: 
-        - !Ref SN1
-      VpcId: !Ref VPC1
-      VpcEndpointType: Interface
-
-  EC2MessagesEndPoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties: 
-      PrivateDnsEnabled: 'true'
-      SecurityGroupIds: 
-        - !Ref SG1
-      ServiceName: 
-        !Join
-          - ''
-          - - 'com.amazonaws.'
-            - !Ref 'AWS::Region'
-            - '.ec2messages'
-      SubnetIds: 
-        - !Ref SN1
-      VpcId: !Ref VPC1
-      VpcEndpointType: Interface
-
-  EC2EndPoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties: 
-      PrivateDnsEnabled: 'true'
-      SecurityGroupIds: 
-        - !Ref SG1
-      ServiceName: 
-        !Join
-          - ''
-          - - 'com.amazonaws.'
-            - !Ref 'AWS::Region'
-            - '.ec2'
-      SubnetIds: 
-        - !Ref SN1
-      VpcId: !Ref VPC1
-      VpcEndpointType: Interface
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/SecurityAudit
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/AWSLambdaReadOnlyAccess
 
   SG1:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow all
+      GroupDescription: Prisma Console HTTPS
       VpcId: !Ref VPC1
       Tags:
         - Key: Name
           Value: minecraft-srv-sg
       SecurityGroupIngress:
-      - IpProtocol: -1
-        FromPort: -1
-        ToPort: -1
-        CidrIp: 0.0.0.0/0
-  
-  SSMLoggingBucket:
-    Type: 'AWS::S3::Bucket'
-    Properties: {}
-
-  MinecraftServerInstall:
-    Type: 'AWS::SSM::Document'
-    Properties:
-      DocumentType: Automation
-      Content:
-        description: >-
-          # MinecraftServerInstallAndConfigure
-
-          This document downsloads the Bedrock-Server from an S3 bucket and then unzips it the the /usr/bin/bedrock-server folder.
-        schemaVersion: '0.3'
-        parameters:
-          InstanceId: 
-            type: StringList
-        mainSteps:
-          - name: InstallNgix
-            action: 'aws:runCommand'
-            inputs:
-              DocumentName: AWS-RunShellScript
-              InstanceIds:
-                - '{{InstanceId}}'
-              Parameters:
-                commands: >-
-                  sudo wget http://nginx.org/keys/nginx_signing.key
-                  sudo apt-key add nginx_signing.key
-                  cd /etc/apt
-                  echo "deb http://nginx.org/packages/ubuntu xenial nginx" | sudo tee -a /etc/apt/sources.list
-                  echo "deb-src http://nginx.org/packages/ubuntu xenial nginx" | sudo tee -a /etc/apt/sources.list
-                  sudo apt-get update
-                  sudo apt-get install nginx
-                  sudo service nginx start
-            description: Download and install nginx
-            onFailure: Continue
-          - name: DownloadServerDistro
-            action: 'aws:runCommand'
-            inputs:
-              DocumentName: AWS-RunShellScript
-              InstanceIds:
-                - '{{InstanceId}}'
-              Parameters:
-                commands: >-
-                  sudo wget -nv https://aws-snort-demo-artifacts.s3.amazonaws.com/bedrock-server-1.14.32.1.zip -O /var/tmp/bedrock-server-1.14.32.1.zip
-            description: Download the server from S3 bucket.
-            onFailure: Continue
-          - name: InstallExtraPackages
-            action: 'aws:runCommand'
-            inputs:
-              DocumentName: AWS-RunShellScript
-              InstanceIds:
-                - '{{InstanceId}}'
-              Parameters:
-                commands: >-
-                  sudo apt-get install unzip
-            description: Unzips the server to /opt.
-            onFailure: Continue
-          - name: UnzipServerDistro
-            action: 'aws:runCommand'
-            inputs:
-              DocumentName: AWS-RunShellScript
-              InstanceIds:
-                - '{{InstanceId}}'
-              Parameters:
-                commands: >-
-                  sudo unzip /var/tmp/bedrock-server-1.14.32.1.zip -d ${MountPoint}
-            description: Unzips the server to /opt.
-            onFailure: Continue
-
-  MineCraftStart:
-    Type: 'AWS::SSM::Document'
-    Properties:
-      DocumentType: Automation
-      Content:
-        description: >-
-          # MineCraftStart
-
-          This document starts the MineCraft Server.
-        schemaVersion: '0.3'
-        parameters:
-          InstanceId: 
-            type: StringList
-        mainSteps:
-          - name: StartMineCraftServer
-            action: 'aws:runCommand'
-            inputs:
-              DocumentName: AWS-RunShellScript
-              InstanceIds:
-                - '{{InstanceId}}'
-              Parameters:
-                commands: >-
-                  sudo cd ${MountPoint}
-                  sudo LD_LIBRARY_PATH=. ./bedrock_server
-            description: Starts the Minecraft Server
-
-  MountTargetSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      VpcId:
-        Ref: VPC1
-      GroupDescription: Security group for mount target
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: '2049'
-          ToPort: '2049'
-          CidrIp: 0.0.0.0/0
-
-  FileSystem:
-    Type: AWS::EFS::FileSystem
-    Properties:
-      PerformanceMode: generalPurpose
-      FileSystemTags:
-        - Key: Name
-          Value: minecraft-server-efs
-
-  MountTarget:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId:
-        Ref: FileSystem
-      SubnetId:
-        Ref: SN2
-      SecurityGroups:
-        - Ref: MountTargetSecurityGroup
-
-  MineCraftELB:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties: 
-      Name: minecraft-elb
-      Subnets: 
-        - !Ref SN2
-      Type: network
-      Tags:
-        - Key: Name
-          Value: minecraft-elb
-
-  LoadBalancerListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref MineCraftELB
-      Port: 19132
-      Protocol: UDP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref DefaultTargetGroup
-  
-  DefaultTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: minecraft-tg
-      VpcId: !Ref VPC1
-      Port: 19132
-      Protocol: UDP
-      HealthCheckPort: 80
-      HealthCheckProtocol: TCP
-      Targets: 
-        - Id: !Ref MineCraftServer
-          Port: 19132
+      - IpProtocol: TCP
+        FromPort: 8083
+        ToPort: 8083
+        SourcePrefixListId: pl-63a5400a
+      - IpProtocol: TCP
+        FromPort: 8083
+        ToPort: 8083
+        CidrIp: 81.103.0.24/32
