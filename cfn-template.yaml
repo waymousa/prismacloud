@@ -15,12 +15,34 @@ Parameters:
   LinuxImageId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+  PrismaCloudS3Bucket:
+    Type: String
+    Default: s3://159843181355-prisma-cloud-distribution
+    Description: S3 path to bucket containig tyhe PrismaCloud distribution
+
+  PrismaCloudDistribution:
+    Type: String
+    Default: prisma_cloud_compute_edition_19_11_512.tar.gz
+    Description: PrismaCloud Distribution File
+
+  PrismaCloudHome:
+    Type: String
+    Default: /opt/twistlock
+    Description: PrismaCloud Home Directory
   
 Mappings: {}
 
 Conditions: {}
 
-Outputs: {}
+Outputs:
+
+  PublicDnsName:
+    Description: DNS name for PrismaCloud Console
+    Value: 
+      Fn::GetAtt:
+        - PrismaCloudInstance
+        - PublicDnsName    
 
 Resources:
 
@@ -104,6 +126,8 @@ Resources:
           #!/bin/bash -xe
           yum update -y
           yum install docker -y
+          sudo service docker start
+          usermod -a -G docker ec2-user
       Tags: 
         - 
           Key: "Name"
@@ -152,8 +176,58 @@ Resources:
       - IpProtocol: TCP
         FromPort: 8083
         ToPort: 8083
-        SourcePrefixListId: pl-63a5400a
+        CidrIp: 0.0.0.0/0
       - IpProtocol: TCP
-        FromPort: 8083
-        ToPort: 8083
-        CidrIp: 81.103.0.24/32
+        FromPort: 8084
+        ToPort: 8084
+        CidrIp: 0.0.0.0/0
+  
+  PrismaCloudInstall:
+    Type: 'AWS::SSM::Document'
+    Properties:
+      DocumentType: Automation
+      Content:
+        description: >-
+          # PrismaCloud Install and Configure
+
+          This document downsloads the PrismaCloud distribution from an S3 bucket and deploys it to the /opt/twistlock folder.
+        schemaVersion: '0.3'
+        parameters:
+          InstanceId: 
+            type: StringList
+        mainSteps:
+          - name: DownloadPrismaCloudDistro
+            action: 'aws:runCommand'
+            inputs:
+              DocumentName: AWS-RunShellScript
+              InstanceIds:
+                - '{{InstanceId}}'
+              Parameters:
+                commands: 
+                  - >-
+                    sudo mkdir /opt/twistlock
+                  - sudo aws s3 cp s3://159843181355-prisma-cloud-distribution/prisma_cloud_compute_edition_19_11_512.tar.gz /opt/twistlock
+            description: Download the server from S3 bucket.
+            onFailure: Continue
+          - name: UnzipPrismaCloudDistro
+            action: 'aws:runCommand'
+            inputs:
+              DocumentName: AWS-RunShellScript
+              InstanceIds:
+                - '{{InstanceId}}'
+              Parameters:
+                commands: >-
+                  sudo tar -xzf /opt/twistlock/prisma_cloud_compute_edition_19_11_512.tar.gz -C /opt/twistlock/
+            description: Unzips the server to /opt/twistlock
+            onFailure: Continue
+          - name: InstallPrismaCloud
+            action: 'aws:runCommand'
+            inputs:
+              DocumentName: AWS-RunShellScript
+              InstanceIds:
+                - '{{InstanceId}}'
+              Parameters:
+                commands: >-
+                  sudo /opt/twistlock/twistlock.sh -s onebox
+            description: Installs the server to /opt/twistlock/
+            onFailure: Continue
